@@ -111,6 +111,28 @@ Rebase mode is useful for updating a feature branch with the latest changes from
 
 - Merge the changelog header (see [Merging the Changelog Header](#merging-the-changelog-header)) with the same rules, so non-conflicting header changes made in the feature branch are preserved as well.
 
+## How It Works (Cherry-pick Mode)
+
+Cherry-pick mode is for applying a single commit to a branch with a different history, which is what `git cherry-pick` does when a fix is ported from the development branch to a release branch (or the other way round). It is activated by using the flag `--cherry-pick`.
+
+Git calls the merge driver with the commit's parent as the base, the commit as `theirs`, and the branch the commit is applied to as `ours`. In this situation, the other two modes would copy every unreleased entry of the source branch, because they merge the unreleased versions as a whole. Cherry-pick mode applies only what the commit changed:
+
+- Take `ours` changelog file and use it as a base.
+
+- For each section of the unreleased version, compare the section in the base with the section in `theirs`. Entries the commit added are appended to the section of the same name in `ours` (the section, or the unreleased version itself, is created when missing). Entries the commit removed are removed from `ours`, one occurrence per removed entry. Entries `ours` already contains are not added again, so applying the same commit twice changes nothing.
+
+- Released versions present in all three files are merged as in the other modes (see [Merging Released Versions](#merging-released-versions)). Versions the commit added are put on top and their entries are removed from the unreleased version, which turns a release commit into the corresponding release on the target branch. Versions the commit removed are removed.
+
+- The changelog header is merged as in the other modes (see [Merging the Changelog Header](#merging-the-changelog-header)).
+
+Cherry-pick mode needs a parsable base changelog. Without one the driver exits with an error, so Git reports a conflict rather than guessing.
+
+A typical setup for a branch-porting workflow is a separate merge driver entry, enabled only for the cherry-pick (for example via `git -c`):
+
+```
+$ git -c merge.changelog.driver="jbang changelog-merge-driver@maven-flow/changelog-merge-driver %A %O %B --cherry-pick" cherry-pick <commit>
+```
+
 ## Changelog Format Extensions
 
 On top of the standard format defined in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), this merge driver supports additional changelog features:
