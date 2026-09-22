@@ -1324,4 +1324,98 @@ class ChangelogMergerTest {
 				.build();
 	}
 
+
+	// --- cherry-pick mode: base = the commit's parent, their = the commit, our = the branch it is applied to
+
+	private static Changelog.Section section(String name, String... lines) {
+		return Changelog.Section.builder().name(name).lines(List.of(lines)).build();
+	}
+
+	private static Changelog.Version unreleased(Changelog.Section... sections) {
+		return Changelog.Version.builder().name("Unreleased").sections(List.of(sections)).build();
+	}
+
+	private static Changelog.Version released(String name, Changelog.Section... sections) {
+		return Changelog.Version.builder().name(name).releaseDate("2020-01-01").sections(List.of(sections)).build();
+	}
+
+	private static Changelog changelog(Changelog.Version unreleasedVersion, Changelog.Version... releasedVersions) {
+		return Changelog.builder().name("Changelog").unreleasedVersion(unreleasedVersion).releasedVersions(List.of(releasedVersions)).build();
+	}
+
+	@Test
+	void cherryPickAppliesOnlyTheEntriesTheCommitChanged() {
+
+		Changelog base = changelog(unreleased(section("Added", "- A1", ""), section("Fixed", "- F1", "")), released("1.0.0"));
+		// the commit adds A2, and rewords F1 to F2
+		Changelog their = changelog(unreleased(section("Added", "- A1", "- A2", ""), section("Fixed", "- F2", "")), released("1.0.0"));
+		// the target has its own unreleased entries; F1 was ported earlier
+		Changelog our = changelog(unreleased(section("Added", "- X1", ""), section("Fixed", "- F1", "- Y1", "")), released("1.0.0"));
+
+		Changelog result = changelogMerger.cherryPick(base, our, their);
+
+		assertThat(result.getUnreleasedVersion().getSections()).extracting(Changelog.Section::getName).containsExactly("Added", "Fixed");
+		assertThat(result.getUnreleasedVersion().getSections().get(0).getLines()).containsExactly("- X1", "- A2", "");
+		assertThat(result.getUnreleasedVersion().getSections().get(1).getLines()).containsExactly("- Y1", "- F2", "");
+		assertThat(result.getReleasedVersions()).extracting(Version::getName).containsExactly("1.0.0");
+	}
+
+	@Test
+	void cherryPickCreatesTheUnreleasedVersionOnAFreshlyReleasedTarget() {
+
+		Changelog base = changelog(unreleased(section("Added", "- A1")), released("1.0.0"));
+		Changelog their = changelog(unreleased(section("Added", "- A1"), section("Fixed", "- F1")), released("1.0.0"));
+		Changelog our = changelog(null, released("1.0.0"));
+
+		Changelog result = changelogMerger.cherryPick(base, our, their);
+
+		assertThat(result.getUnreleasedVersion().getName()).isEqualTo("Unreleased");
+		assertThat(result.getUnreleasedVersion().getSections()).hasSize(1);
+		assertThat(result.getUnreleasedVersion().getSections().get(0).getName()).isEqualTo("Fixed");
+		assertThat(result.getUnreleasedVersion().getSections().get(0).getLines()).containsExactly("- F1");
+	}
+
+	@Test
+	void cherryPickOfAReleaseCommitReleasesTheSameEntriesOnTheTarget() {
+
+		Changelog base = changelog(unreleased(section("Fixed", "- F1", "- F2")), released("1.0.0"));
+		// the commit turns the unreleased version into 1.0.1
+		Changelog their = changelog(null, released("1.0.1", section("Fixed", "- F1", "- F2")), released("1.0.0"));
+		// the target (the development branch) has more unreleased entries than the release
+		Changelog our = changelog(unreleased(section("Added", "- A9"), section("Fixed", "- F1", "- F2", "- F9")), released("1.0.0"));
+
+		Changelog result = changelogMerger.cherryPick(base, our, their);
+
+		assertThat(result.getReleasedVersions()).extracting(Version::getName).containsExactly("1.0.1", "1.0.0");
+		assertThat(result.getReleasedVersions().get(0).getSections().get(0).getLines()).containsExactly("- F1", "- F2");
+		assertThat(result.getUnreleasedVersion().getSections()).extracting(Changelog.Section::getName).containsExactly("Added", "Fixed");
+		assertThat(result.getUnreleasedVersion().getSections().get(1).getLines()).containsExactly("- F9");
+	}
+
+	@Test
+	void cherryPickRemovesOneOccurrenceOfADuplicatedEntry() {
+
+		Changelog base = changelog(unreleased(section("Added", "- D", "- D")));
+		Changelog their = changelog(unreleased(section("Added", "- D")));
+		Changelog our = changelog(unreleased(section("Added", "- D", "- D", "- E")));
+
+		Changelog result = changelogMerger.cherryPick(base, our, their);
+
+		assertThat(result.getUnreleasedVersion().getSections().get(0).getLines()).containsExactly("- D", "- E");
+	}
+
+	@Test
+	void cherryPickAppliedTwiceChangesNothing() {
+
+		Changelog base = changelog(unreleased(section("Added", "- A1")), released("1.0.0"));
+		Changelog their = changelog(unreleased(section("Added", "- A1", "- A2")), released("1.0.0"));
+		Changelog our = changelog(unreleased(section("Added", "- X1")), released("1.0.0"));
+
+		Changelog once = changelogMerger.cherryPick(base, our, their);
+		Changelog twice = changelogMerger.cherryPick(base, once, their);
+
+		assertThat(twice).isEqualTo(once);
+		assertThat(once.getUnreleasedVersion().getSections().get(0).getLines()).containsExactly("- X1", "- A2");
+	}
+
 }

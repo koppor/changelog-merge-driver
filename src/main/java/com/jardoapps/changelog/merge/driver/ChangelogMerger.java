@@ -144,6 +144,140 @@ public class ChangelogMerger {
 	}
 
 	/**
+	 * Apply the change a single commit made to a changelog onto a changelog with a different history:
+	 * what Git needs when the commit is cherry-picked onto another branch (a fix ported from the
+	 * development branch to a release branch, or the other way round). The base changelog is the
+	 * commit's parent, "theirs" the commit itself, and "ours" the branch the commit is applied to.
+	 * <p>
+	 * Unlike {@link #merge(Changelog, Changelog, Changelog)}, the unreleased version of "theirs" is
+	 * not merged as a whole: on the source branch it contains every unreleased entry of that branch,
+	 * of which only the ones the commit added belong on the target. Instead, the difference between
+	 * the base and "theirs" is applied to "ours", per section: entries the commit added are appended
+	 * to the section of the same name (created when missing), entries the commit removed are removed,
+	 * one occurrence per removed entry. Entries "ours" already has are not added again, so applying
+	 * the same commit twice is harmless.
+	 * <p>
+	 * The rest of the changelog is handled three-way as well: released versions present in all three
+	 * are merged like in the other modes, versions the commit added go on top (and their entries
+	 * leave the unreleased version, as for a release the commit made), versions the commit removed
+	 * are removed, and the header follows {@link #mergeHeaderLines}.
+	 */
+	public Changelog cherryPick(Changelog base, Changelog our, Changelog their) {
+
+		List<Version> releasedVersions = new ArrayList<>();
+		for (Version ourReleasedVersion : our.getReleasedVersions()) {
+			Optional<Version> theirReleasedVersion = findVersionByName(their.getReleasedVersions(), ourReleasedVersion.getName());
+			Optional<Version> baseReleasedVersion = findVersionByName(base.getReleasedVersions(), ourReleasedVersion.getName());
+			if (theirReleasedVersion.isPresent() && baseReleasedVersion.isPresent()) {
+				releasedVersions.add(mergeReleasedVersion(baseReleasedVersion.get(), ourReleasedVersion, theirReleasedVersion.get()));
+			} else if (baseReleasedVersion.isEmpty() || theirReleasedVersion.isPresent()) {
+				// unknown to the commit, or untouched by it
+				releasedVersions.add(ourReleasedVersion);
+			}
+			// present in base but not in theirs: the commit removed the version
+		}
+
+		// versions the commit added go on top, newest last so that they end up in their order
+		for (int i = their.getReleasedVersions().size() - 1; i >= 0; i--) {
+			Version theirReleasedVersion = their.getReleasedVersions().get(i);
+			if (findVersionByName(base.getReleasedVersions(), theirReleasedVersion.getName()).isEmpty()
+					&& findVersionByName(our.getReleasedVersions(), theirReleasedVersion.getName()).isEmpty()) {
+				releasedVersions.add(0, theirReleasedVersion);
+			}
+		}
+
+		Version unreleasedVersion = applyUnreleasedChange(base.getUnreleasedVersion(), our.getUnreleasedVersion(), their.getUnreleasedVersion());
+		unreleasedVersion = removeDuplicatedUnreleasedLines(unreleasedVersion, releasedVersions);
+
+		return Changelog.builder()
+				.name(mergeChangelogName(base, our, their, our.getName()))
+				.headerLines(mergeHeaderLines(base, our, their, our.getHeaderLines()))
+				.unreleasedVersion(unreleasedVersion)
+				.releasedVersions(releasedVersions)
+				.build();
+	}
+
+	/**
+	 * The unreleased version of "ours" with the entry-level difference between the base and "theirs"
+	 * applied, see {@link #cherryPick(Changelog, Changelog, Changelog)}. A missing unreleased version
+	 * counts as empty: a target without one gets one as soon as the commit adds an entry, and a
+	 * commit that turned the unreleased version into a release removes its entries from the target.
+	 */
+	Version applyUnreleasedChange(Version base, Version our, Version their) {
+
+		List<Section> baseSections = base == null ? List.of() : base.getSections();
+		List<Section> theirSections = their == null ? List.of() : their.getSections();
+
+		List<Section> resultSections = new ArrayList<>();
+		if (our != null) {
+			resultSections.addAll(our.getSections());
+		}
+
+		Set<String> sectionNames = new LinkedHashSet<>();
+		theirSections.forEach(s -> sectionNames.add(s.getName()));
+		baseSections.forEach(s -> sectionNames.add(s.getName()));
+
+		for (String sectionName : sectionNames) {
+
+			List<String> baseLines = nonBlankLines(findByName(baseSections, sectionName));
+			List<String> theirLines = nonBlankLines(findByName(theirSections, sectionName));
+
+			// multiset difference: removing one of two equal entries removes exactly one on the target, too
+			List<String> removedLines = new ArrayList<>(baseLines);
+			List<String> addedLines = new ArrayList<>();
+			for (String theirLine : theirLines) {
+				if (!removedLines.remove(theirLine)) {
+					addedLines.add(theirLine);
+				}
+			}
+
+			if (addedLines.isEmpty() && removedLines.isEmpty()) {
+				continue;
+			}
+
+			Optional<Section> ourSection = findByName(resultSections, sectionName);
+			List<String> resultLines = new ArrayList<>(ourSection.map(Section::getLines).orElse(List.of()));
+
+			// an entry the commit removed that never reached this branch is simply absent here
+			removedLines.forEach(resultLines::remove);
+
+			// appended after the last entry, ahead of the blank lines that separate the sections
+			int insertAt = resultLines.size();
+			while (insertAt > 0 && StringUtils.isBlank(resultLines.get(insertAt - 1))) {
+				insertAt--;
+			}
+			for (String addedLine : addedLines) {
+				if (!resultLines.contains(addedLine)) {
+					resultLines.add(insertAt++, addedLine);
+				}
+			}
+
+			Section resultSection = Section.builder().name(sectionName).lines(resultLines).build();
+			if (ourSection.isPresent()) {
+				resultSections.set(resultSections.indexOf(ourSection.get()), resultSection);
+			} else if (!addedLines.isEmpty()) {
+				resultSections.add(resultSection);
+			}
+		}
+
+		if (our == null && resultSections.isEmpty()) {
+			return null;
+		}
+
+		Version template = our != null ? our : their;
+		return Version.builder()
+				.name(template.getName())
+				.link(template.getLink())
+				.releaseDate(template.getReleaseDate())
+				.sections(resultSections)
+				.build();
+	}
+
+	private static List<String> nonBlankLines(Optional<Section> section) {
+		return section.map(Section::getLines).orElse(List.of()).stream().filter(StringUtils::isNotBlank).collect(Collectors.toList());
+	}
+
+	/**
 	 * Three-way merge of the changelog name (the caption in the first line of the file): the name
 	 * changed by one side wins; changed by both, "theirs" wins, consistently with
 	 * {@link #mergeReleasedVersion(Version, Version, Version)}. Without a base to compare against,

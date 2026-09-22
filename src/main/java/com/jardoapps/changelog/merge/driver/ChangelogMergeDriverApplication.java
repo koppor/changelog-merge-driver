@@ -28,6 +28,7 @@ public class ChangelogMergeDriverApplication {
 		String theirFile = args[2];
 
 		boolean rebase = Arrays.asList(args).contains("--rebase");
+		boolean cherryPick = Arrays.asList(args).contains("--cherry-pick");
 
 		Changelog ourChangelog = loadChangelog(ourFile);
 		Changelog theirChangelog = loadChangelog(theirFile);
@@ -36,7 +37,16 @@ public class ChangelogMergeDriverApplication {
 		ChangelogMerger changelogMerger = new ChangelogMerger();
 		Changelog mergedChangelog;
 
-		if (rebase) {
+		if (cherryPick) {
+			if (baseChangelog == null) {
+				// Without the commit's parent there is no way to tell which entries the commit added.
+				// A non-zero exit makes Git mark the file as conflicting instead of taking a guess.
+				System.err.println("Cherry-pick mode needs a parsable base changelog");
+				System.exit(1);
+			}
+			System.out.println("Performing changelog cherry-pick");
+			mergedChangelog = changelogMerger.cherryPick(baseChangelog, ourChangelog, theirChangelog);
+		} else if (rebase) {
 			System.out.println("Performing changelog rebase");
 			mergedChangelog = changelogMerger.rebase(baseChangelog, ourChangelog, theirChangelog);
 		} else {
