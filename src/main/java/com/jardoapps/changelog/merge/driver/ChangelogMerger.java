@@ -187,7 +187,7 @@ public class ChangelogMerger {
 		}
 
 		Version unreleasedVersion = applyUnreleasedChange(base.getUnreleasedVersion(), our.getUnreleasedVersion(), their.getUnreleasedVersion());
-		unreleasedVersion = removeDuplicatedUnreleasedLines(unreleasedVersion, releasedVersions);
+		unreleasedVersion = removeDuplicatedUnreleasedLines(unreleasedVersion, releasedVersions, Set.of());
 
 		return Changelog.builder()
 				.name(mergeChangelogName(base, our, their, our.getName()))
