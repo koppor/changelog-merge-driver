@@ -124,15 +124,22 @@ public class ChangelogMerger {
 			}
 		}
 
-		Version unreleasedVersion = their.getUnreleasedVersion();
-		if (unreleasedVersion == null) {
-			unreleasedVersion = our.getUnreleasedVersion();
-		} else {
-			Set<String> theirSectionNames = unreleasedVersion.getSections().stream().map(Section::getName).collect(Collectors.toSet());
-			unreleasedVersion = rebaseVersions(removeBaseLines(our.getUnreleasedVersion(), base), unreleasedVersion);
-			// de-duplicate against the merged versions, not "theirs": a line our side added to a
-			// released version is in the result's released history and must not stay unreleased too
-			unreleasedVersion = removeDuplicatedUnreleasedLines(unreleasedVersion, rebasedReleasedVersions, theirSectionNames);
+		Version theirUnreleasedVersion = their.getUnreleasedVersion();
+		Set<String> theirSectionNames = theirUnreleasedVersion == null
+				? Set.of()
+				: theirUnreleasedVersion.getSections().stream().map(Section::getName).collect(Collectors.toSet());
+		// "theirs" without an unreleased version has just been released (the heading renamed in
+		// place): the lines our side shares with the base went into that release, so they are
+		// filtered out just the same
+		Version unreleasedVersion = removeBaseLines(our.getUnreleasedVersion(), base);
+		if (theirUnreleasedVersion != null) {
+			unreleasedVersion = rebaseVersions(unreleasedVersion, theirUnreleasedVersion);
+		}
+		// de-duplicate against the merged versions, not "theirs": a line our side added to a
+		// released version is in the result's released history and must not stay unreleased too
+		unreleasedVersion = removeDuplicatedUnreleasedLines(unreleasedVersion, rebasedReleasedVersions, theirSectionNames);
+		if (theirUnreleasedVersion == null && unreleasedVersion != null && unreleasedVersion.getSections().isEmpty()) {
+			unreleasedVersion = null;
 		}
 
 		return Changelog.builder()
