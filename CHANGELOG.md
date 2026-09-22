@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A version heading without a release date (for example `## [Unreleased]`) got the heading itself assigned as its release date.
 - A release date separated from the version name by something other than `" - "` (for example an en dash) was lost the same way. The separator is now skipped whatever it is, and the canonical `" - "` is written back.
 - [#10](https://github.com/maven-flow/changelog-merge-driver/issues/10) Version heading links are dropped when the changelog is written back
-- Rebasing re-added unreleased entries of the merge base that `theirs` had since reworded or released, and dropped the empty section headings of `theirs`. Only the unreleased lines `ours` added are carried over now.
+- Rebasing re-added unreleased entries of the merge base that `theirs` had since reworded or released, and dropped the empty section headings of `theirs`. Only the unreleased lines `ours` added are carried over now, also when `theirs` released its unreleased version without starting a new one.
 
 ## [0.4.0] - 2024-07-13
 
