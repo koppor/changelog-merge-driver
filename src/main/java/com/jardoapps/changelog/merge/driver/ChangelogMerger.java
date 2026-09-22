@@ -80,7 +80,7 @@ public class ChangelogMerger {
 		// add unreleased changes of theirs to the end of unreleased changes of ours
 		unreleasedVersion = mergeVersions(unreleasedVersion, their.getUnreleasedVersion(), false);
 
-		unreleasedVersion = removeDuplicatedUnreleasedLines(unreleasedVersion, mergedReleasedVersions);
+		unreleasedVersion = removeDuplicatedUnreleasedLines(unreleasedVersion, mergedReleasedVersions, Set.of());
 
 		return Changelog.builder()
 				.name(mergeChangelogName(base, our, their, our.getName()))
@@ -128,10 +128,11 @@ public class ChangelogMerger {
 		if (unreleasedVersion == null) {
 			unreleasedVersion = our.getUnreleasedVersion();
 		} else {
-			unreleasedVersion = rebaseVersions(our.getUnreleasedVersion(), unreleasedVersion);
+			Set<String> theirSectionNames = unreleasedVersion.getSections().stream().map(Section::getName).collect(Collectors.toSet());
+			unreleasedVersion = rebaseVersions(removeBaseLines(our.getUnreleasedVersion(), base), unreleasedVersion);
 			// de-duplicate against the merged versions, not "theirs": a line our side added to a
 			// released version is in the result's released history and must not stay unreleased too
-			unreleasedVersion = removeDuplicatedUnreleasedLines(unreleasedVersion, rebasedReleasedVersions);
+			unreleasedVersion = removeDuplicatedUnreleasedLines(unreleasedVersion, rebasedReleasedVersions, theirSectionNames);
 		}
 
 		return Changelog.builder()
@@ -588,7 +589,44 @@ public class ChangelogMerger {
 		}
 	}
 
-	Version removeDuplicatedUnreleasedLines(Version unreleasedVersion, List<Version> releasedVersions) {
+	/**
+	 * Our unreleased version without the lines it shares with the base's unreleased version: only
+	 * the lines our side added are ours to carry over. The others belong to "theirs", which may
+	 * have reworded, released or removed them since; carrying our stale copy would re-add them.
+	 */
+	Version removeBaseLines(Version our, Changelog base) {
+
+		if (our == null || base == null || base.getUnreleasedVersion() == null) {
+			return our;
+		}
+
+		List<Section> sections = new ArrayList<>(our.getSections().size());
+		for (Section ourSection : our.getSections()) {
+			Set<String> baseLines = findByName(base.getUnreleasedVersion().getSections(), ourSection.getName())
+					.map(s -> Set.copyOf(s.getLines()))
+					.orElse(Set.of());
+			sections.add(Section.builder()
+					.name(ourSection.getName())
+					.lines(ourSection.getLines().stream()
+							.filter(l -> StringUtils.isBlank(l) || !baseLines.contains(l))
+							.collect(Collectors.toList()))
+					.build());
+		}
+
+		return Version.builder()
+				.name(our.getName())
+				.link(our.getLink())
+				.releaseDate(our.getReleaseDate())
+				.sections(sections)
+				.build();
+	}
+
+	/**
+	 * Removes unreleased lines already present in a released version. A section left without items
+	 * is dropped, unless it is named in {@code keptSectionNames} (e.g. the empty section headings
+	 * "theirs" keeps as a template for upcoming entries).
+	 */
+	Version removeDuplicatedUnreleasedLines(Version unreleasedVersion, List<Version> releasedVersions, Set<String> keptSectionNames) {
 
 		if (unreleasedVersion == null) {
 			return null;
@@ -611,7 +649,7 @@ public class ChangelogMerger {
 			} else {
 				Set<String> unreleasedLines = new LinkedHashSet<>(unreleasedSection.getLines());
 				unreleasedLines.removeAll(allReleasedLines);
-				if (unreleasedLines.stream().anyMatch(StringUtils::isNotBlank)) {
+				if (keptSectionNames.contains(unreleasedSection.getName()) || unreleasedLines.stream().anyMatch(StringUtils::isNotBlank)) {
 					newSections.add(Section.builder()
 							.name(unreleasedSection.getName())
 							.lines(unreleasedLines)

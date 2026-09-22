@@ -762,6 +762,85 @@ class ChangelogMergerTest {
 	}
 
 	@Test
+	void testRebase_carriesOnlyLinesAddedByOurs() throws Exception {
+
+		String baseChangelog = """
+				# Changelog
+
+				## [Unreleased]
+
+				### Added
+
+				- Feature.
+
+				### Changed
+
+				### Fixed
+
+				""";
+
+		String ourChangelog = """
+				# Changelog
+
+				## [Unreleased]
+
+				### Added
+
+				- Feature.
+
+				### Changed
+
+				### Fixed
+
+				- Our fix.
+
+				""";
+
+		// their side reworded "Feature." before releasing it
+		String theirChangelog = """
+				# Changelog
+
+				## [Unreleased]
+
+				### Added
+
+				### Changed
+
+				### Fixed
+
+				## [1.0.0] - 2026-09-21
+
+				### Added
+
+				- Feature, reworded.
+
+				""";
+
+		Changelog rebasedChangelog = changelogMerger.rebase(parse(baseChangelog), parse(ourChangelog), parse(theirChangelog));
+
+		assertThat(print(rebasedChangelog)).isEqualTo("""
+				# Changelog
+
+				## [Unreleased]
+
+				### Added
+
+				### Changed
+
+				### Fixed
+
+				- Our fix.
+
+				## [1.0.0] - 2026-09-21
+
+				### Added
+
+				- Feature, reworded.
+
+				""");
+	}
+
+	@Test
 	void testRebase_withoutOurUnreleasedVersion() {
 
 		Changelog ourChangelog = Changelog.builder()
